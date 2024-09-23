@@ -1,10 +1,11 @@
-> 多模态的第一篇论文贡献给通义千问系列，目前应该是国内效果独一档的模型了。当然因为本人对其他公司的一些进展暂时没有跟进，所以也是自己的瞎点评。当然写这篇文章的出发点也是为了激励自己日后多多总结，扩展自己的知识面。
+> 多模态的第一篇系统性笔记贡献给通义千问系列，目前应该是国内效果独一档的模型了。当然因为本人对其他公司的一些进展暂时没有跟进，所以也是自己的瞎点评。当然写这篇文章的出发点也是为了激励自己日后多多总结，扩展自己的知识面。
 
-通义千问最近新发布了他们的Qwen2-VL系列模型（主要包括2B、7B和72B三个规模的模型，其中2B主要是用于端侧部署）。三个模型具体的比较可见下表，
+通义千问最近新发布了他们的Qwen2-VL系列模型（主要包括2B、7B和72B三个规模的模型，其中2B主要是用于端侧部署）。最早应该是先发布了两个小模型，后面跟着把72B的模型和论文一起发出来了，难怪中间这段时间在modelscope上找创空间并没有找到72B对应的东西。
+三个模型具体的区别可见下表，
 ![Qwen2-VL Model Comparison](qwen2_vl/table1.png)
 
 
-新模型支持的特性有以下几点：
+新模型支持的特性（并不是说以前的模型没有）有以下几点：
 1. 支持图像、视频、文本的三种模态输入
 2. 支持任意resolution & aspect ratio的图像/视频输入
 
@@ -12,13 +13,14 @@
 基于此我们需要关注该模型具体的实现细节有以下几点：
 1. [统一图片与视频处理]：视频在输入的过程中多出来的temporal维度是如何被处理的？
 2. [M-RoPE]：如何设计一种多模态RoPE将图像、视频以及文本三种模态一同输入到LLM中去进行处理
-3. [ViT 2D-RoPE]：一种针对任意 resolution & aspect ratio的图像输入ViT中使用的2D RoPE
+3. [ViT 2D-RoPE]：一种针对任意 resolution & aspect ratio的图像输入ViT中使用的2D-RoPE
 
 
 首先做一些基本的回顾
+
 从最简单的图片来说，我们可以先回顾一下一般的实现方法，这里主要回顾从图片到进入transformer blocks之前的处理，主要分为以下几步，
 1. 将图片resize成固定大小，如224*224
-2. 将图片按照固定patch size进行切分，设ps=16，那么我们就会将图片切分成了224//16 ** 2=196个patches
+2. 将图片按照固定patch size进行切分，设ps=16，那么我们就会将图片从高度和宽度两个方向，切分成 (224 // 16) ** 2 = 196 个patches
 3. 将这些patches从2D的排布flatten成1D的，即1 * 3 * (14 * 16) * (14 * 16) -> (1, 14 * 14, (16 * 16 * 3))
 4. 对patches做Patch Embedding，即 (1, 14 * 14, (16 * 16 * 3)) -> (1, 196, 768)，看着维度是没有变化，但实际上是做了linear projection的
 5. 对每个位置加上一个learnable absolute position embedding，引入空间位置信息
@@ -27,13 +29,13 @@
 如果这时候我们开始引入视频数据，我们的输入数据维度就从以往的(1,3,224,224)变成了(1,16,3,224,224)，其中16所在的维度代表视频帧数，即16帧。这时候一般的处理方法会将16这一维度后续一起放到(b,t,h)中的t的维度上去，即如果一张图片在最后进入transformer blocks中之前的维度是(1,196,768)的话，那它对应的视频维度则是(1, 196*16, 768)了。
 上面我们讲述的是一般的处理方法，接下来我们看看Qwen2-VL中的处理方式。主要关注以下几点，
 1. 视频数据采样方式：以往的视频推理的模型在视频数据进入模型之前一定是会做采样处理的，否则单个视频数据需要处理的数据量远远超过单张图片的，且存在很大程度上的冗余。这里论文里采用了 sample two frames per second的采样策略。
-2. temporal维度进一步融合：回顾一般的处理方法中，直接将16放到了t=196的维度上，我们相当于是设置了一个temporal_patch_size=1的参数，这里怎么理解temporal_patch_size呢？在spatial维度上，我们有patch_size=16，那在temporal维度上我们也可以定义一个patch_size用于空间维度的切分，在这种设定下(temporal_patch_size, patch_size, patch_size)内的像素最后都会作为一个token存在。
+2. temporal维度进一步融合：回顾一般的处理方法中，直接将16放到了t=196的维度上，我们相当于是设置了一个temporal_patch_size=1的参数，这里怎么理解temporal_patch_size呢？在spatial维度上，我们有patch_size=16，那在temporal维度上我们也可以定义一个patch_size用于空间维度的切分，在这种设定下(temporal_patch_size, patch_size, patch_size)内的像素最后都会作为同一个token存在。
 3. 统一图片与视频处理：图片可以看作是n_frames=1的视频的特殊情况，又因为2中有Qwen2-VL会将连续2个frames在temporal维度上进一步融合，所以代码中有这样的处理
 `patches = np.tile(patches, (self.temporal_patch_size, 1, 1, 1))`
 
 
 ## M-RoPE
-【假设我们前面已经回顾了比如LLaVA的LLM中使用的位置编码】那不同于以往的LLM中的1D位置编码，Qwen2-VL设计了一种叫3D-RoPE的东西，即针对每一个token其对应的position_ids都是一个3维的东西，分别代表其在temporal, spatial(h & w)上的postion id，对于图像来说这三个维度都是比较好理解的，而对于文本来说，这三个维度上的postion_id都是一致的，可以证明这时文本的3d-RoPE等价于1d-RoPE。M-RoPE论文中也有一张比较清晰的图，如下
+【假设我们前面已经回顾了比如LLaVA的LLM中使用的位置编码】那不同于以往的LLM中的1D位置编码，Qwen2-VL设计了一种叫3D-RoPE的东西，即针对每一个token其对应的position_id都是一个3维的东西，分别代表其在temporal, spatial(h & w)上的postion id，对于图像来说这三个维度都是比较好理解的，而对于文本来说，这三个维度上的postion_id都是一致的，可以证明这时文本的3d-RoPE等价于1d-RoPE。M-RoPE论文中也有一张比较清晰的图，如下
 ![M-RoPE](qwen2_vl/M-RoPE.png)
 从图中可以简单发现几点，
 1. 同一帧内的所有图片的temporal_position_id一致
@@ -61,9 +63,23 @@ flatten_patches = patches.reshape(
 ```
 通过上述这一通reshape的操作，patches的排布从原本简单的flatten，变成了下面的样子
 ```
+假设原图 resize 后划分成了如下的若干 patch
 
+patch_1 , patch_2 , patch_5 , patch_6 , 
+patch_3 , patch_4 , patch_7 , patch_8 ,
+patch_9 , patch_10 , patch_13 , patch_14
+patch_11 , patch_12 , patch_15 , patch_16
+
+
+模型会将这些 patch 进行flatten，随后通过VIT获取到这些 patch 的特征,
+
+注意，qwen2vl 在对这些 patch 进行 flatten 的时候，会按照如下的顺序进行 flatten(每4个相邻的放在一起)
+
+feature = [
+  f1 , f2 ,  f3 , f4 , f5 , f6 , f7 , f8 , f9 ,f10 ,  f11 , f12 , f13 , f14, f15 , f16
+]
 ```
-这样操作的合理性在于空间维度上相邻像素点的位置应该是更近而非更远的，如果按照原始直接flatten的排布，第一行和第二行的patch的位置就会离得很远，但这样做其实只是在一定程度上（patch merger size范围内）相对缓和了这一问题。此外因为此时我们的patches排布变成了`[f1 , f2 , f5 , f6 , f3 , f4 , f7 , f8 , f9 ,f10 , f13 , f14, f11 , f12 , f15 , f16]`，这里Qwen2-VL通过将相邻4个patch的特征合为1个特征的方法，进一步达到了降低visual tokens个数的目的，这也符合我们对spatial维度上存在一定程度信息冗余的先验知识。
+这样操作的合理性在于空间维度上相邻像素点的位置应该是更近而非更远的，如果按照原始直接flatten的排布，第一行和第二行的patch的位置就会离得很远，但这样做其实只是在一定程度上（patch merger size范围内）相对缓和了这一问题。此外因为此时我们的patches排布变成了`[f1 , f2 ,  f3 , f4 , f5 , f6 , f7 , f8 , f9 ,f10 ,  f11 , f12 , f13 , f14, f15 , f16]`，这里Qwen2-VL通过将相邻4个patch的特征合为1个特征的方法，进一步达到了降低visual tokens个数的目的，这也符合我们对spatial维度上存在一定程度信息冗余的先验知识。
 ```python
 [
     f1 , f2 , f5 , f6 , 
@@ -206,10 +222,12 @@ pos_ids = torch.cat(pos_ids, dim=0)
 # 为每一个位置分配  h  / w 方向上的坐标 
 
 # [
-#     patch_1(0,0) , patch_2(0,1) , patch_(0,2) , patch_4(0,3) , 
-#     patch_5(1,0) , patch_6(1,1) , patch_7(1,2) , patch_8(1,3) ,
-#     patch_9(2,0) , patch_10(2,1) , patch_11(2,2) , patch_12(2,3),
-#     patch_13(3,0) , patch_14(3,1) , patch_15(3,2) , patch_16(3,3)
+#     patch_1(0,0), patch_2(0,1), patch_3(0,2), patch_4(0,3), patch_5(0,4), patch_6(0,5), 
+#     patch_6(1,0), patch_7(1,1), patch_8(1,2), patch_9(1,3), patch_10(1,4), patch_11(1,5), 
+#     patch_12(2,0), patch_13(2,1), patch_14(2,2), patch_15(2,3), patch_16(2,4), patch_17(2,5),
+#     patch_18(3,0), patch_19(3,1), patch_20(3,2), patch_21(3,3), patch_22(3,4), patch_23(3,5),
+#     patch_24(4,0), patch_25(4,1), patch_26(4,2), patch_27(4,3), patch_28(4,4), patch_29(4,5),
+#     patch_30(5,0), patch_31(5,1), patch_32(5,2), patch_33(5,3), patch_34(5,4), patch_35(5,5)
 # ]
 
 # hpos_ids
@@ -257,3 +275,9 @@ def apply_rotary_pos_emb_vision(tensor: torch.Tensor, freqs: torch.Tensor) -> to
     output = output.to(orig_dtype)
     return output
 ```
+
+
+# TODO：后续需要补全的知识
+1. RoPE的原理与源码
+2. 其他MLLM中LLM使用的位置编码方式
+3. Qwen-VL与Qwen2-VL之间的区别（待选）
