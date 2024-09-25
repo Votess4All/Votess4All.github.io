@@ -24,10 +24,10 @@ LLaMA-Factory针对数据集的管理全都放在了data/dataset_info.json文件
       "tools": "tools"
     }
   },
-  ...,
-  # 自定义数据集
+  // ...,
+  // 自定义数据集
   "custom_dataset": {
-    ...
+    // file_name: xxx
   }
 }
 ```
@@ -190,10 +190,10 @@ dataset_dict = split_dataset(dataset, data_args, seed=training_args.seed)
 ...
 dataset_module = {}
 if "train" in dataset_dict:
-	dataset_module["train_dataset"] = dataset_dict["train"]
+    dataset_module["train_dataset"] = dataset_dict["train"]
 
 if "validation" in dataset_dict:
-	dataset_module["eval_dataset"] = dataset_dict["validation"]
+    dataset_module["eval_dataset"] = dataset_dict["validation"]
 ```
 
 于是 `dataset_module = get_dataset(template, model_args, data_args, training_args, stage="sft", **tokenizer_module)` 就简单介绍完毕啦。
