@@ -57,11 +57,11 @@ def align_dataset(dataset):
     pass
 
 def _get_merged_dataset(dataset_list)
-	datasets = []
-	for ds in dataset_list:
-		datasets.append(_load_single_dataset(ds, ...))
+    datasets = []
+    for ds in dataset_list:
+        datasets.append(_load_single_dataset(ds, ...))
 
-	return merge_dataset(datasets)
+    return merge_dataset(datasets)
 ```
 
 这样我们就完成了数据集加载的步骤。我们可以对比看下不同格式从其原始格式（alpaca / shareGPT）转换成 standard dataset的前后变化。
@@ -76,22 +76,22 @@ def _get_merged_dataset(dataset_list)
 上一步我们只是完成了数据加载，即将我们的原始数据从最开始的数据结构转换成了标准的数据结构，并将可能存在的多个数据集合并到了一起，但是离我们将文本转成input ids，以及针对有图像和视频的情况引入special tokens还有一段距离。那这些就是preprocess_func需要做的事情。
 ```python
 def _get_preprocessed_dataset():
-	preprocess_func, _ = get_preprocess_and_print_func()
-	dataset = dataset.map(
+    preprocess_func, _ = get_preprocess_and_print_func()
+    dataset = dataset.map(
         preprocess_func,
         ...,
     )
-	return dataset
+    return dataset
 
 
 def get_preprocess_and_print_func():
-	...
-	...
-	preprocess_supervised_dataset()
-	print_supervised_dataset_example()
-	...
-	...
-	pass
+    # ...
+    # ...
+    preprocess_supervised_dataset()
+    print_supervised_dataset_example()
+    # ...
+    # ...
+    pass
 ```
 
 这里我们主要看一下`preprocess_supervised_dataset`这个函数，
@@ -103,10 +103,10 @@ def preprocess_supervised_dataset():
 	"""
     model_inputs = defaultdict(list)
     for i in range(len(examples["_prompt"])):
-        ...
+        # ...
 
-		# 我们这里主要关注input_ids, labels是怎么产生的，
-		# 注意到这一步之前我们的example里面都是一些纯文本，还没有special token的插入
+        # 我们这里主要关注input_ids, labels是怎么产生的，
+        # 注意到这一步之前我们的example里面都是一些纯文本，还没有special token的插入
         input_ids, labels = _encode_supervised_example(
             prompt=examples["_prompt"][i],
             response=examples["_response"][i],
@@ -131,26 +131,26 @@ def preprocess_supervised_dataset():
 
 
 def _encode_supervised_example():
-	# 主要关注以下几行代码即可，
-	# process_messages 主要是将 <|vision_start|>{}<|vision_end|> 以及 <image_pad>
-	# or <video_pad> 这些special token插入进去
-	messages = template.mm_plugin.process_messages(
-		prompt + response, 
-		images, 
-		videos, 
-		processor
-	)
-	input_ids, labels = template.mm_plugin.process_token_ids(
-	    [], [], images, videos, tokenizer, processor
-	)
-	# 将文本映射为input_ids,
-	encoded_pairs = template.encode_multiturn(
-		tokenizer, messages, system, tools
-	)
-	total_length = len(input_ids) + (1 if template.efficient_eos else 0)
+    # 主要关注以下几行代码即可，
+    # process_messages 主要是将 <|vision_start|>{}<|vision_end|> 以及 <image_pad>
+    # or <video_pad> 这些special token插入进去
+    messages = template.mm_plugin.process_messages(
+        prompt + response, 
+        images, 
+        videos, 
+        processor
+    )
+    input_ids, labels = template.mm_plugin.process_token_ids(
+        [], [], images, videos, tokenizer, processor
+    )
+    # 将文本映射为input_ids,
+    encoded_pairs = template.encode_multiturn(
+        tokenizer, messages, system, tools
+    )
+    total_length = len(input_ids) + (1 if template.efficient_eos else 0)
 
-	# 并生成对应的labels, 一般情况下如果只在assistant的回复
-	# 数据上训练的话，只会在对应位置产生loss；否则，设置为 IGNORE_INDEX
+    # 并生成对应的labels, 一般情况下如果只在assistant的回复
+    # 数据上训练的话，只会在对应位置产生loss；否则，设置为 IGNORE_INDEX
     for turn_idx, (source_ids, target_ids) in enumerate(encoded_pairs):
         ...
 
@@ -177,8 +177,8 @@ def _encode_supervised_example():
         else:
             input_ids += source_ids + target_ids
             labels += source_label + target_label
-        ...
-        ...
+        # ...
+        # ...
 
 ```
 
